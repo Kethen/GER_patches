@@ -21,21 +21,36 @@ void log_func_disabled(const char *fmt, ...){
 }
 
 void log_func_no_break(const char *fmt, ...){
+	struct timespec begin = {0};
+	clock_gettime(CLOCK_MONOTONIC, &begin);
 	va_list args;
 	va_start(args, fmt);
 	char log_buf[4096] = {0};
 	vsprintf(log_buf, fmt, args);
 	va_end(args);
-	LOG("GAMELOG: %s\n", log_buf);
+	LOG("GAMELOG: %000d.%000000000d 0x%x thread %u %s\n", begin.tv_sec, begin.tv_nsec, __builtin_return_address(0), GetCurrentThreadId(), log_buf);
+}
+
+void log_func_with_level(uint32_t level, char *fmt, ...){
+	struct timespec begin = {0};
+	clock_gettime(CLOCK_MONOTONIC, &begin);
+	va_list args;
+	va_start(args, fmt);
+	char log_buf[4096] = {0};
+	vsprintf(log_buf, fmt, args);
+	va_end(args);
+	LOG("GAMELOG_LVL: %000d.%000000000d 0x%x thread %u (0x%x) %s\n", begin.tv_sec, begin.tv_nsec, __builtin_return_address(0), GetCurrentThreadId(), level, log_buf);
 }
 
 void log_func(const char *fmt, ...){
+	struct timespec begin = {0};
+	clock_gettime(CLOCK_MONOTONIC, &begin);
 	va_list args;
 	va_start(args, fmt);
 	char log_buf[4096] = {0};
 	vsprintf(log_buf, fmt, args);
 	va_end(args);
-	LOG("GAMELOG: %s", log_buf);
+	LOG("GAMELOG: %000d.%000000000d 0x%x thread %u %s", begin.tv_sec, begin.tv_nsec, __builtin_return_address(0), GetCurrentThreadId(), log_buf);
 }
 
 void (__attribute__((stdcall))*sleep_orig)(DWORD ms) = NULL;
@@ -49,13 +64,26 @@ uint64_t tick_per_ms = 0;
 static void busynanosleep(uint64_t sleep_time_ns){
 	struct timespec begin = {0};
 	clock_gettime(CLOCK_MONOTONIC, &begin);
+
+	#if 1
+	// only busyloop the last 1ms to encourage cpu time
+	if (sleep_time_ns > 1000000){
+		struct timespec sleep_time = {
+			.tv_sec = 0,
+			.tv_nsec = sleep_time_ns - 1000000,
+		};
+	}
+	#endif
+
 	while(true){
 		static struct timespec now = {0};
 		clock_gettime(CLOCK_MONOTONIC, &now);
 		if (begin.tv_sec != now.tv_sec || now.tv_nsec - begin.tv_nsec > sleep_time_ns){
 			break;
 		}
+		#if 0
 		Sleep(0);
+		#endif
 	}
 }
 
@@ -100,6 +128,29 @@ void __attribute__((thiscall))delay(uint32_t offset_obj, uint64_t to_delay_ticks
 	}
 }
 
+
+DWORD (__attribute__((stdcall)) *WaitForSingleObject_orig)(HANDLE handle, DWORD timeout) = NULL;
+DWORD __attribute__((stdcall)) WaitForSingleObject_hook(HANDLE handle, DWORD timeout){
+	DWORD ret = WaitForSingleObject_orig(handle, timeout);
+	uint32_t ret_addr = (uint32_t)__builtin_return_address(0);
+	if (timeout != 0xFFFFFFFF && ret_addr < 0x10000000){
+		LOG("%s: waiting for handle 0x%x for %d ms from 0x%x thread %u\n", __func__, handle, timeout, __builtin_return_address(0), GetCurrentThreadId());
+	}
+	return ret;
+}
+
+int (*wait_for_vblank_orig)(int blanks) = NULL;
+int wait_for_vblank_hook(int blanks){
+	#if 0
+	LOG("%s: waiting for %d frames from 0x%x\n", __func__, blanks, __builtin_return_address(0));
+	int ret = wait_for_vblank_orig(blanks);
+	LOG("%s: ret %d\n", __func__, ret);
+	return ret;
+	#else
+	return 1;
+	#endif
+}
+
 void hook(){
 	MH_STATUS init_status = MH_Initialize();
 	if (init_status != MH_OK && init_status != MH_ERROR_ALREADY_INITIALIZED){
@@ -127,10 +178,31 @@ void hook(){
 	// qlib/sony/steam logs
 	//HOOK(0x018c6f44, log_func_no_break, NULL);
 	HOOK(0x018c6f44, log_func_disabled, NULL);
+	// also PC log?
+	//HOOK(0x01b1deaa, log_func, NULL);
+	HOOK(0x01b1deaa, log_func_disabled, NULL);
+	// qlib networking trace
+	//HOOK(0x018c6ef4, log_func_no_break, NULL);
+	HOOK(0x018c6ef4, log_func_disabled, NULL);
+	// leveled logs?
+	//HOOK(0x01b1d928, log_func_with_level, NULL);
+	HOOK(0x01b1d928, log_func_disabled, NULL);
+	// iskra1 trace
+	HOOK(0x01b1d8e8, log_func_disabled, NULL);
+
+
 	//HOOK(Sleep, sleep_logged, &sleep_orig);
 	HOOK(0x0213350f, delay, &delay_orig);
 	// generates connection debug logs, disable it here
 	HOOK(0x017ff641, dump_connection, NULL);
+
+	HOOK(0x01b17f2e, wait_for_vblank_hook, &wait_for_vblank_orig);
+
+	#if 0
+	HANDLE kernel32 = LoadLibraryA("kernel32.dll");
+	void *wait_for_single_object = (void *)GetProcAddress(kernel32, "WaitForSingleObject");
+	HOOK(wait_for_single_object, WaitForSingleObject_hook, &WaitForSingleObject_orig);
+	#endif
 }
 
 __attribute__((constructor))
@@ -141,4 +213,6 @@ int init(){
 	QueryPerformanceFrequency((void *)&tick_per_second);
 	tick_per_ms = tick_per_second / 1000;
 	LOG("%s: tick per ms %d\n", __func__, tick_per_ms);
+	struct timespec test;
+	LOG("%s: tv_sec size %u tv_nsec size %u\n", __func__, sizeof(test.tv_sec), sizeof(test.tv_nsec));
 }
