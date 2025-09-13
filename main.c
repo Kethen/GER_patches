@@ -31,6 +31,9 @@ void log_func_no_break(const char *fmt, ...){
 	LOG("GAMELOG: %000d.%000000000d 0x%x thread %u %s\n", begin.tv_sec, begin.tv_nsec, __builtin_return_address(0), GetCurrentThreadId(), log_buf);
 }
 
+void log_func_with_level_disabled(uint32_t level, char *fmt, ...){
+}
+
 void log_func_with_level(uint32_t level, char *fmt, ...){
 	struct timespec begin = {0};
 	clock_gettime(CLOCK_MONOTONIC, &begin);
@@ -61,7 +64,7 @@ void __attribute__((stdcall)) sleep_logged(DWORD ms){
 
 uint64_t tick_per_ms = 0;
 
-static void busynanosleep(uint64_t sleep_time_ns){
+void busynanosleep(uint64_t sleep_time_ns){
 	struct timespec begin = {0};
 	clock_gettime(CLOCK_MONOTONIC, &begin);
 
@@ -87,7 +90,7 @@ static void busynanosleep(uint64_t sleep_time_ns){
 	}
 }
 
-static void normalnanosleep(uint64_t sleep_time_ns){
+void normalnanosleep(uint64_t sleep_time_ns){
 	struct timespec sleep_time = {
 		.tv_sec = 0,
 		.tv_nsec = sleep_time_ns
@@ -186,7 +189,7 @@ void hook(){
 	HOOK(0x018c6ef4, log_func_disabled, NULL);
 	// leveled logs?
 	//HOOK(0x01b1d928, log_func_with_level, NULL);
-	HOOK(0x01b1d928, log_func_disabled, NULL);
+	HOOK(0x01b1d928, log_func_with_level_disabled, NULL);
 	// iskra1 trace
 	HOOK(0x01b1d8e8, log_func_disabled, NULL);
 
