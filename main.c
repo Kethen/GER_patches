@@ -154,6 +154,23 @@ int wait_for_vblank_hook(int blanks){
 	#endif
 }
 
+uint32_t (*maybe_game_tick_orig)(uint32_t unk1, uint32_t unk2, uint32_t unk3) = NULL;
+uint32_t maybe_game_tick_hook(uint32_t unk1, uint32_t unk2, uint32_t unk3){
+	//LOG("%s: unk3 %u\n", __func__, unk3);
+	uint32_t ret = maybe_game_tick_orig(unk1, unk2, unk3);
+	return ret;
+}
+
+uint32_t (*run_or_cancel_task_orig)(uint32_t task_obj, uint32_t unk1, uint32_t unk2) = NULL;
+uint32_t run_or_cancel_task_hook(uint32_t task_obj, uint32_t unk1, uint32_t unk2){
+	// guessing param and param size on unk1 and unk2
+	//LOG("%s: task type 0x%x current lock 0x%x task sleep ticks 0x%x\n", __func__, *(uint32_t*)(task_obj + 0x80), *(uint32_t*)0x01632e00, *(uint32_t*)(task_obj + 0x80));
+	// force unlock networking
+	*(uint32_t*)0x01632e00 = *(uint32_t*)0x01632e00 & (~0x10);
+	uint32_t ret = run_or_cancel_task_orig(task_obj, unk1, unk2);
+	return ret;
+}
+
 void hook(){
 	MH_STATUS init_status = MH_Initialize();
 	if (init_status != MH_OK && init_status != MH_ERROR_ALREADY_INITIALIZED){
@@ -200,6 +217,10 @@ void hook(){
 	HOOK(0x017ff641, dump_connection, NULL);
 
 	HOOK(0x01b17f2e, wait_for_vblank_hook, &wait_for_vblank_orig);
+
+	//HOOK(0x01ee9af3, maybe_game_tick_hook, &maybe_game_tick_orig);
+
+	//HOOK(0x01ee9edb, run_or_cancel_task_hook, &run_or_cancel_task_orig);
 
 	#if 0
 	HANDLE kernel32 = LoadLibraryA("kernel32.dll");
