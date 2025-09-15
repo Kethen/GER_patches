@@ -10,6 +10,7 @@
 
 #include <synchapi.h>
 #include <profileapi.h>
+#include <processthreadsapi.h>
 
 #include "log.h"
 
@@ -68,7 +69,7 @@ void busynanosleep(uint64_t sleep_time_ns){
 	struct timespec begin = {0};
 	clock_gettime(CLOCK_MONOTONIC, &begin);
 
-	#if 1
+	#if 0
 	// only busyloop the last 1ms to encourage cpu time
 	if (sleep_time_ns > 1000000){
 		struct timespec sleep_time = {
@@ -84,7 +85,7 @@ void busynanosleep(uint64_t sleep_time_ns){
 		if (begin.tv_sec != now.tv_sec || now.tv_nsec - begin.tv_nsec > sleep_time_ns){
 			break;
 		}
-		#if 0
+		#if 1
 		Sleep(0);
 		#endif
 	}
@@ -171,6 +172,38 @@ uint32_t run_or_cancel_task_hook(uint32_t task_obj, uint32_t unk1, uint32_t unk2
 	return ret;
 }
 
+WINBOOL (WINAPI *SetThreadPriority_orig)(HANDLE thread, int priority) = NULL;
+WINBOOL WINAPI SetThreadPriority_hook(HANDLE thread, int priority){
+	if ((uint32_t)__builtin_return_address(0) < 0x20000000){
+		LOG("%s: setting thread priority of 0x%x to 0x%x\n", __func__, thread, priority);
+		return TRUE;
+	}else{
+		return SetThreadPriority_orig(thread, priority);
+	}
+}
+
+
+HANDLE (WINAPI *CreateThread_orig) (LPSECURITY_ATTRIBUTES lpThreadAttributes, SIZE_T dwStackSize, LPTHREAD_START_ROUTINE lpStartAddress, LPVOID lpParameter, DWORD dwCreationFlags, LPDWORD lpThreadId) = NULL;
+HANDLE WINAPI CreateThread_hook (LPSECURITY_ATTRIBUTES lpThreadAttributes, SIZE_T dwStackSize, LPTHREAD_START_ROUTINE lpStartAddress, LPVOID lpParameter, DWORD dwCreationFlags, LPDWORD lpThreadId){
+	HANDLE ret = CreateThread_orig(lpThreadAttributes, dwStackSize, lpStartAddress, lpParameter, dwCreationFlags, lpThreadId);
+	if ((uint32_t)lpStartAddress < 0x2000000){
+		LOG("%s: entry point 0x%x handle 0x%x\n", __func__, lpStartAddress, ret);
+	}
+	return ret;
+}
+
+uint32_t (*sceNetSendTo_orig)(int32_t sock, void *msg, uint32_t len, int32_t flags, void *addr, uint32_t addr_len) = NULL;
+uint32_t sceNetSendTo_hook(int32_t sock, void *msg, uint32_t len, int32_t flags, void *addr, uint32_t addr_len){
+	SetThreadPriority_orig(GetCurrentThread(), 15);
+	return sceNetSendTo_orig(sock, msg, len, flags, addr, addr_len);
+}
+
+uint32_t (*sceNetRecvFrom_orig)(int32_t sock, void *buf, uint32_t len, int32_t flags, void *addr, uint32_t *addr_len) = NULL;
+uint32_t sceNetRecvFrom_hook(int32_t sock, void *buf, uint32_t len, int32_t flags, void *addr, uint32_t *addr_len){
+	SetThreadPriority_orig(GetCurrentThread(), 2);
+	return sceNetRecvFrom_orig(sock, buf, len, flags, addr, addr_len);
+}
+
 void hook(){
 	MH_STATUS init_status = MH_Initialize();
 	if (init_status != MH_OK && init_status != MH_ERROR_ALREADY_INITIALIZED){
@@ -221,6 +254,12 @@ void hook(){
 	//HOOK(0x01ee9af3, maybe_game_tick_hook, &maybe_game_tick_orig);
 
 	//HOOK(0x01ee9edb, run_or_cancel_task_hook, &run_or_cancel_task_orig);
+
+	HOOK(SetThreadPriority, SetThreadPriority_hook, &SetThreadPriority_orig);
+	HOOK(CreateThread, CreateThread_hook, &CreateThread_orig);
+
+	HOOK(0x017e5480, sceNetSendTo_hook, &sceNetSendTo_orig);
+	HOOK(0x017e51d0, sceNetRecvFrom_hook, &sceNetRecvFrom_orig);
 
 	#if 0
 	HANDLE kernel32 = LoadLibraryA("kernel32.dll");
